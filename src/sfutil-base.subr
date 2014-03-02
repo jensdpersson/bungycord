@@ -1,0 +1,1273 @@
+#!/bin/sh
+#
+# $Id: sfutil-base.subr,v 1.14 2007/12/05 01:15:55 daniell Exp $
+#
+# Miscellaneous shell functions of general use.
+#
+# To prevent reinventing the wheel, and enhance consistency,
+# a number of functions are defined here for general use.
+#
+
+#
+# Verbosity level
+#
+SFUTIL_VERBOSE=${SFUTIL_VERBOSE:-1}
+SFUTIL_LOG_VERBOSE=${SFUTIL_LOG_VERBOSE:-$((${SFUTIL_VERBOSE}+1))}
+
+# Turn off tracing temporarily
+SFUTIL_UNTRACE='echo $- | grep -q x && { set +x; SFUTIL_UNTRACE_END="set -x"; }'
+
+SFUTIL_ERROR_PREFIX='${TC_FG_RED}ERROR:${TC_FG_NORM} '
+SFUTIL_WARNING_PREFIX='${TC_FG_YELLOW}WARNING:${TC_FG_NORM} '
+
+_uname=$(uname)
+
+#---------------------------------------------------------------------
+
+sfutil_log()
+#
+# Echo arguments on fd 3
+#
+# By default, fd 3 is connected to stdout, but can be redirected by
+# doing "exec 3><redir>" (replacing <redir> with something appropriate)
+#
+{
+    echo "$@" >&3
+    if [ -n "${SFUTIL_LOG}" ]; then
+	echo $(date "+%X"): "$@" >>${SFUTIL_LOG}
+    fi
+}
+
+# Default to stdout
+exec 3>&1
+
+#---------------------------------------------------------------------
+
+sfutil_msg()
+#
+# Print message depending on verbosity level
+#
+# The level argument is compared against the current value of the
+# variable $SFUTIL_VERBOSE, and if it is less or equal, the message is
+# printed.
+#
+# Arguments:
+# level : minimum verbosity level to print this message
+# text  : text to print
+{
+    local level=$1
+    if [ $level -le $SFUTIL_VERBOSE ]; then
+	shift
+	sfutil_log "$@"
+    elif [  -n "${SFUTIL_LOG}" -a $level -le $SFUTIL_LOG_VERBOSE ]; then
+        shift
+        echo $(date "+%X"): "$@" >>${SFUTIL_LOG}
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_warn()
+#
+# Print warning message
+#
+# Calls sfutil_log to print message, adorned with a warning header.
+#
+# Arguments:
+# text : text to print
+{
+    if [ -n "${SFUTIL_SYSLOG}" ]; then
+	logger ${SFUTIL_LOGGERARGS} -p ${SFUTIL_SYSLOG}.warning ${SFUTIL_SYSLOG_TAG} "$@"
+    else
+        eval local pfx=\"${SFUTIL_WARNING_PREFIX}\"
+        sfutil_log "${pfx}$*"
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_info()
+#
+# Print informational message
+#
+# Calls sfutil_msg with level set to 1, which is
+# also the default verbosity level (i.e. informationals should always
+# show up in normal circumstances).
+#
+# Arguments:
+# text : text to print
+{
+    if [ -n "${SFUTIL_SYSLOG}" ]; then
+	logger ${SFUTIL_LOGGERARGS} -p ${SFUTIL_SYSLOG}.notice ${SFUTIL_SYSLOG_TAG} "$@"
+    else
+	sfutil_msg 1 "$@"
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_detail()
+#
+# Print detailed info message
+#
+# Calls sfutil_msg with level set to 2.
+# Detailed messages are not shown by default.
+#
+# Arguments:
+# text : text to print
+{
+    if [ -n "${SFUTIL_SYSLOG}" ]; then
+	logger ${SFUTIL_LOGGERARGS} -p ${SFUTIL_SYSLOG}.info ${SFUTIL_SYSLOG_TAG} "$@"
+    else
+	sfutil_msg 2 "$@"
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_debug()
+#
+# Print debug message
+#
+# Calls sfutil_msg with level set to 3. Intended
+# for low level debugging purposes.
+#
+# Arguments:
+# text : text to print
+{
+    if [ -n "${SFUTIL_SYSLOG}" ]; then
+	logger ${SFUTIL_LOGGERARGS} -p ${SFUTIL_SYSLOG}.debug ${SFUTIL_SYSLOG_TAG} "$@"
+    else
+	sfutil_msg 3 Debug: "$@"
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_error()
+#
+# Print error message
+#
+# Calls sfutil_log adorned with an error header
+#
+# Arguments:
+# text : text to print
+{
+    if [ -n "${SFUTIL_SYSLOG}" ]; then
+	logger ${SFUTIL_LOGGERARGS} -p ${SFUTIL_SYSLOG}.err ${SFUTIL_SYSLOG_TAG} "$@"
+    else
+        eval local pfx=\"${SFUTIL_ERROR_PREFIX}\"
+	sfutil_log "${pfx}$*"
+    fi
+}
+
+#---------------------------------------------------------------------
+
+SFUTIL_LOG=
+_sfutiltrace=false
+_sfutilexec=true
+
+sfutil_trace_init()
+#
+# Initialize trace package.
+#
+# If a logfile is given, it's name is stored in the SFUTIL_LOG
+# environment variable.
+#
+# Arguments:
+# --trace          : Turn on tracing
+# --noexec         : Turn off execution, just print the statements
+# --logfile <file> : Log tracing to file
+#
+{
+    local option prev optarg
+
+    for option; do
+
+        # If the previous option needs an argument, assign it.
+	if test -n "$prev"; then
+	    eval "$prev=\$option"
+	    prev=
+	    continue
+	fi
+
+	optarg=`expr "x$option" : 'x[^=]*=\(.*\)'`
+
+	case $option in
+
+	    -trace | -t | --trace)
+		_sfutiltrace=true ;;
+
+	    -noexec | -n | --noexec)
+		_sfutiltrace=true
+		_sfutilexec=false
+		;;
+
+	    -logfile | -f | --logfile)
+		prev=SFUTIL_LOG ;;
+
+	    -logfile=* | --logfile=*)
+		SFUTIL_LOG=${optarg} ;;
+
+	    -syslog | --syslog)
+		prev=SFUTIL_SYSLOG ;;
+
+	    -syslog=* | --syslog=*)
+		SFUTIL_SYSLOG=${optarg} ;;
+
+	    -tag | --tag )
+		prev=SFUTIL_SYSLOG_TAG ;;
+
+	    -tag=* | --tag=*)
+		SFUTIL_SYSLOG_TAG=${optarg} ;;
+
+	    -*)
+		sfutil_error Unknown option: $option
+		exit 1
+
+	esac
+    done
+
+    if [ -n "${SFUTIL_SYSLOG_TAG}" ]; then
+	SFUTIL_SYSLOG_TAG="-t ${SFUTIL_SYSLOG_TAG}"
+    fi
+
+    # Direct traces to /dev/tty by default
+    if ${_sfutiltrace}; then
+	exec 4>/dev/tty ||
+        exec 4>&2
+    fi
+}
+
+#---------------------------------------------------------------------
+
+
+sfutil_trace()
+#
+# Log statements on screen and/or log file
+#
+# Examples:
+#
+# $ sfutil_trace_init --noexec
+# $ sfutil_trace ls /var/tmp
+# # ls /var/tmp
+#
+# $ sfutil_trace_init --logfile=test.log --trace
+# $ sfutil_trace ls /etc/passwd
+# # ls /etc/passwd
+# /etc/passwd
+#
+# $ cat test.log
+# 15:28:27: # ls /etc/passwd
+#
+{
+    ${_sfutiltrace} && echo "# $TC_FG_BLUE$*$TC_FG_NORM" >&4
+    if [ -n "${SFUTIL_LOG}" ]; then
+	echo $(date "+%X"): "#" "$@" >>${SFUTIL_LOG}
+    fi
+    if ${_sfutilexec}; then
+	if [ -n "${SFUTIL_SYSLOG}" ]; then
+	    logger -p ${SFUTIL_SYSLOG}.info ${SFUTIL_SYSLOG_TAG} "#" "$@"
+	fi
+	"$@"
+    fi
+}
+
+#---------------------------------------------------------------------
+
+
+sfutil_init_termcap()
+#
+# Initialize termcap variables.
+#
+# If you want to portably use various termcap features, call this
+# routine to initialize the termcap variables.  Using these variables
+# avoids making new processes (i.e. calling 'tput') each time you want
+# to turn on/off a termcap feature (of course, at the price of making
+# a bunch of process calls initially).
+#
+# Note: Use these with caution.  Don't assume they have an effect, not
+# every terminal supports these features.  While using these variables
+# on terminals that doesn't support the feature is harmless (the
+# variable will be empty in this case), the result might not be what
+# you expect (e.g. trying to move the cursor, to overwrite some previous
+# output).
+#
+# Variables:
+#
+#  Character attributes:
+#
+#  TC_CA_BOLD:    Turn on bold character mode
+#  TC_CA_REVERSE: Turn on reverse video mode
+#  TC_CA_ULINE:   Turn on underline mode
+#  TC_CA_END:     End all character attributes
+#
+#  Graphic character mode:
+#
+#  TC_GRAPH:      Turn on graphic character mode
+#  TC_GRAPH_END:  End graphic character mode
+#
+#  Cursor movement:
+#
+#  TC_M_UP1:      Move up one line
+#  TC_M_DOWN1:    Move down one line
+#  TC_M_LEFT1:    Move left one column
+#  TC_M_RIGHT1:   Move right one column
+#  TC_M_CR:       Move to first column (carriage return)
+#
+#  Colour:
+#
+#  TC_FG_BLACK:   Black foreground colour
+#  TC_BG_BLACK:   Black background colour
+#  TC_FG_RED:     Red foreground colour
+#  TC_BG_RED:     Red background colour
+#  TC_FG_GREEN:   Green foreground colour
+#  TC_BG_GREEN:   Green background colour
+#  TC_FG_YELLOW:  Yellow foreground colour
+#  TC_BG_YELLOW:  Yellow background colour
+#  TC_FG_BLUE:    Blue foreground colour
+#  TC_BG_BLUE:    Blue background colour
+#  TC_FG_PURPLE:  Purple foreground colour
+#  TC_BG_PURPLE:  Purple background colour
+#  TC_FG_CYAN:    Cyan foreground colour
+#  TC_BG_CYAN:    Cyan background colour
+#  TC_FG_WHITE:   White foreground colour
+#  TC_BG_WHITE:   White background colour
+#  TC_FG_NORM:    Normal foreground colour (Use this instead of TC_FG_BLACK
+#                 to restore foreground colour. TC_FG_BLACK isn't really
+#                 black, it's dark grey, and not the standard foreground
+#                 colour).
+#  TC_BG_NORM:    Normal background colour (Use this instead of TC_BG_WHITE
+#                 to restore background colour. TC_BG_WHITE isn't really
+#                 white, it's light grey).
+#
+#  Semantic variables:
+#
+#  Use these rather than the concrete variables above, when applicable.
+#  This ensures a consistent look, and makes changes more manageable.
+#
+#  TC_HELP:           Turns on 'help' style
+#  TC_HELP_END:       Turns off 'help' style
+#  TC_PROMPT:         Turns on 'prompt' style
+#  TC_PROMPT_END:     Turns off 'prompt' style
+#  TC_PROMPT_OPT:     Turns on 'prompt options' style
+#  TC_PROMPT_OPT_END: Turns off 'prompt options' style
+#
+{
+    SFUTIL_TERMCAP=${SFUTIL_TERMCAP:-true}
+    if ! ${SFUTIL_TERMCAP} 2>/dev/null; then
+	# Termcap is explicitly turned off, skip this
+	return
+    fi
+
+    if [ -z "$TC_GRAPH" ]; then
+	local SFUTIL_UNTRACE_END
+	eval ${SFUTIL_UNTRACE}
+
+	if [ $_uname = FreeBSD ]; then
+	    # Character attributes
+	    TC_CA_BOLD=$([ $TERM ] && tput md)
+	    TC_CA_REVERSE=$([ $TERM ] && tput mr)
+	    TC_CA_ULINE=$([ $TERM ] && tput us)
+
+	    TC_CA_END=$([ $TERM ] && tput me)
+	    TC_CA_ULINE_END=$([ $TERM ] && tput ue)
+
+	    # Alternate character set mode (graphic characters)
+	    TC_GRAPH=$([ $TERM ] && tput as)
+	    TC_GRAPH_END=$([ $TERM ] && tput ae)
+
+	    # Movement commands
+	    TC_M_UP1=$([ $TERM ] && tput up)
+	    TC_M_DOWN1=$([ $TERM ] && tput do)
+	    TC_M_LEFT1=$([ $TERM ] && tput kbs)
+	    TC_M_RIGHT1=$([ $TERM ] && tput nd)
+	    TC_M_CR=$([ $TERM ] && tput cr)
+
+	    # Cursor commands
+	    TC_C_INVIS=$([ $TERM ] && tput vi)
+	    TC_C_NORMAL=$([ $TERM ] && tput ve)
+
+	    # Foreground and background colours
+	    TC_FG_BLACK=$([ $TERM ] && tput AF 0)
+	    TC_BG_BLACK=$([ $TERM ] && tput AB 0)
+	    TC_FG_RED=$([ $TERM ] && tput AF 1)
+	    TC_BG_RED=$([ $TERM ] && tput AB 1)
+	    TC_FG_GREEN=$([ $TERM ] && tput AF 2)
+	    TC_BG_GREEN=$([ $TERM ] && tput AB 2)
+	    TC_FG_YELLOW=$([ $TERM ] && tput AF 3)
+	    TC_BG_YELLOW=$([ $TERM ] && tput AB 3)
+	    TC_FG_BLUE=$([ $TERM ] && tput AF 4)
+	    TC_BG_BLUE=$([ $TERM ] && tput AB 4)
+	    TC_FG_PURPLE=$([ $TERM ] && tput AF 5)
+	    TC_BG_PURPLE=$([ $TERM ] && tput AB 5)
+	    TC_FG_CYAN=$([ $TERM ] && tput AF 6)
+	    TC_BG_CYAN=$([ $TERM ] && tput AB 6)
+	    TC_FG_WHITE=$([ $TERM ] && tput AF 7)
+	    TC_BG_WHITE=$([ $TERM ] && tput AB 7)
+
+	    # Is this really true? Only empirically, and not widely tested...
+	    TC_FG_NORM=$([ $TERM ] && tput AF 9)
+	    TC_BG_NORM=$([ $TERM ] && tput AB 9)
+
+	    # Screen width
+	    [ $TERM ] && TC_TERM_WIDTH="tput co"
+
+	else # !FreeBSD (Linux)
+	    # Character attributes
+	    TC_CA_BOLD=$([ $TERM ] && tput bold)
+	    TC_CA_REVERSE=$([ $TERM ] && tput rev)
+	    TC_CA_ULINE=$([ $TERM ] && tput smul)
+
+	    TC_CA_END=$([ $TERM ] && tput sgr0)
+	    TC_CA_ULINE_END=$([ $TERM ] && tput rmul)
+
+	    # Alternate character set mode (graphic characters)
+	    TC_GRAPH=$([ $TERM ] && tput smacs)
+	    TC_GRAPH_END=$([ $TERM ] && tput rmacs)
+
+	    # Movement commands
+	    TC_M_UP1=$([ $TERM ] && tput cuu1)
+	    TC_M_DOWN1=$([ $TERM ] && tput cud1)
+	    TC_M_LEFT1=$([ $TERM ] && tput cub1)
+	    TC_M_RIGHT1=$([ $TERM ] && tput cuf1)
+	    TC_M_CR=$([ $TERM ] && tput cr)
+
+	    # Cursor commands
+	    TC_C_INVIS=$([ $TERM ] && tput civis)
+	    TC_C_NORMAL=$([ $TERM ] && tput cnorm)
+
+	    # Foreground and background colours
+	    TC_FG_BLACK=$([ $TERM ] && tput setf 0)
+	    TC_BG_BLACK=$([ $TERM ] && tput setb 0)
+	    TC_FG_BLUE=$([ $TERM ] && tput setf 1)
+	    TC_BG_BLUE=$([ $TERM ] && tput setb 1)
+	    TC_FG_GREEN=$([ $TERM ] && tput setf 2)
+	    TC_BG_GREEN=$([ $TERM ] && tput setb 2)
+	    TC_FG_CYAN=$([ $TERM ] && tput setf 3)
+	    TC_BG_CYAN=$([ $TERM ] && tput setb 3)
+	    TC_FG_RED=$([ $TERM ] && tput setf 4)
+	    TC_BG_RED=$([ $TERM ] && tput setb 4)
+	    TC_FG_PURPLE=$([ $TERM ] && tput setf 5)
+	    TC_BG_PURPLE=$([ $TERM ] && tput setb 5)
+	    TC_FG_YELLOW=$([ $TERM ] && tput setf 6)
+	    TC_BG_YELLOW=$([ $TERM ] && tput setb 6)
+	    TC_FG_WHITE=$([ $TERM ] && tput setf 7)
+	    TC_BG_WHITE=$([ $TERM ] && tput setb 7)
+
+	    # Is this really true? Only empirically, and not widely tested...
+	    TC_FG_NORM=$([ $TERM ] && tput setf 9)
+	    TC_BG_NORM=$([ $TERM ] && tput setb 9)
+
+	    # Screen width
+	    [ $TERM ] && TC_TERM_WIDTH="tput cols"
+
+	fi
+
+        if [ $_uname = Darwin ]; then
+	    # Foreground and background colours
+	    TC_FG_BLACK=$([ $TERM ] && tput setaf 0)
+	    TC_BG_BLACK=$([ $TERM ] && tput setab 0)
+	    TC_FG_RED=$([ $TERM ] && tput setaf 1)
+	    TC_BG_RED=$([ $TERM ] && tput setab 1)
+	    TC_FG_GREEN=$([ $TERM ] && tput setaf 2)
+	    TC_BG_GREEN=$([ $TERM ] && tput setab 2)
+	    TC_FG_YELLOW=$([ $TERM ] && tput setaf 3)
+	    TC_BG_YELLOW=$([ $TERM ] && tput setab 3)
+	    TC_FG_BLUE=$([ $TERM ] && tput setaf 4)
+	    TC_BG_BLUE=$([ $TERM ] && tput setab 4)
+	    TC_FG_PURPLE=$([ $TERM ] && tput setaf 5)
+	    TC_BG_PURPLE=$([ $TERM ] && tput setab 5)
+	    TC_FG_CYAN=$([ $TERM ] && tput setaf 6)
+	    TC_BG_CYAN=$([ $TERM ] && tput setab 6)
+	    TC_FG_WHITE=$([ $TERM ] && tput setaf 7)
+	    TC_BG_WHITE=$([ $TERM ] && tput setab 7)
+
+	    # Is this really true? Only empirically, and not widely tested...
+	    TC_FG_NORM=$([ $TERM ] && tput setaf 9)
+	    TC_BG_NORM=$([ $TERM ] && tput setab 9)
+        fi
+
+        # Setting up symbolic names to avoid hardcoding actual colors, etc
+	TC_HELP=${TC_FG_BLUE}
+	TC_HELP_END=${TC_FG_NORM}
+
+	TC_PROMPT=${TC_CA_BOLD}
+	TC_PROMPT_END=${TC_CA_END}
+
+	TC_PROMPT_OPT=${TC_FG_RED}
+	TC_PROMPT_OPT_END=${TC_FG_NORM}
+
+	TC_TERM_WIDTH=${TC_TERM_WIDTH:-echo 80}
+
+        # enable alt charset
+        tput enacs
+
+	${SFUTIL_UNTRACE_END}
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_version_split()
+#
+# Split version numbers
+#
+# Splits input "x.y[.z]" into variables ${prefix}major
+# and ${prefix}minor, and ${prefix}rev (only if 'z' is present).
+#
+# Arguments:
+#  ver:    version string
+#  prefix: variable prefix
+#
+# Example:
+#
+# $ sfutil_version_split 3.5.2 ver
+# $ echo Major: $vermajor Minor: $verminor Rev: $verrev
+# Major: 3 Minor: 5 Rev: 2
+#
+{
+    local ver=$1 prefix=$2 rest
+    shift 2
+
+    eval "${prefix}major=${ver%%.*}"
+    rest=${ver#*.}
+    eval "${prefix}minor=${rest%%.*}"
+    echo $rest | grep -q "\." && eval "${prefix}rev=${rest#*.}"
+}
+
+#---------------------------------------------------------------------
+
+sfutil_version_is_newer()
+#
+# Compares the two versions.
+#
+# Compares the two versions and returns true (0) if the first is
+# newer than the second, otherwise false (!= 0).
+#
+# Arguments:
+#  version1:  a two or three level version number (<major>.<minor>[.<rev>])
+#  version2:  a two or three level version number (<major>.<minor>[.<rev>])
+#
+# Examples:
+#
+# $ sfutil_version_is_newer 3.4.4 3.3.1 && echo yes || echo no
+# yes
+# $ sfutil_version_is_newer 3.4.4 3.4.4 && echo yes || echo no
+# no
+# $ sfutil_version_is_newer 3.5 3.4.4 && echo yes || echo no
+# yes
+#
+{
+    local ver1=$1 ver2=$2
+    local ver1major ver1minor ver1rev
+    local ver2major ver2minor ver2rev
+    shift 2
+
+    # Split version into major/minor pair
+    sfutil_version_split $ver1 ver1
+    sfutil_version_split $ver2 ver2
+
+    # It really shouldn't be this complex to compare version numbers...
+    if [ $ver1major -gt $ver2major ]; then
+	true
+    elif [ $ver1major = $ver2major -a $ver1minor -gt $ver2minor ]; then
+	true
+    elif [ $ver1major = $ver2major -a $ver1minor = $ver2minor ]; then
+        if [ -z "$ver2rev" -a -z "$ver1rev" ]; then
+            false
+	elif [ -z "$ver2rev" -a -n "$ver1rev" ]; then
+	    true
+	elif [ -n "$ver1rev" -a "$ver1rev" -gt "$ver2rev" ]; then
+	    true
+	else
+	    false
+	fi
+    else
+	false
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_repeat_char()
+#
+# Print 'count' number of 'char' in sequence.
+#
+# Arguments:
+#  char: The character to print
+#  count: The number of characters to print
+#
+{
+    local char count
+    char="$1"; shift;
+    count="$1"; shift;
+
+    if which jot >/dev/null 2>&1; then
+	jot -n -b "$char" -s "" $count
+    else
+	while [ $count -gt 0 ]; do
+	    printf "$char"
+	    count=$((count-1))
+	done
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_warning()
+#
+# Print a warning or important message
+#
+# Prints a message centered on the line with a red background. This is
+# for *serious* warnings!
+#
+# Arguments:
+#  message: The message to print on the screen
+#
+# Examples:
+#
+# $ sfutil_warning Do NOT press that button!
+# <big red frame with text "Do NOT press that button!>
+# 
+{
+    local col i wrap
+
+    sfutil_init_termcap
+
+    local SFUTIL_UNTRACE_END
+    eval ${SFUTIL_UNTRACE}
+
+    # Ask the terminal how wide it is, and default to
+    # 80 columns. Subtracting 1 to avoid wrap effects.
+    col=$(($(eval ${TC_TERM_WIDTH})-1))
+    wrap=$(($col-5))
+
+    # Red background, white foreground, and bold mode
+    printf "$TC_BG_RED$TC_FG_WHITE$TC_CA_BOLD"
+
+    # Print $col spaces
+    sfutil_repeat_char " " $col
+
+    # Turn off background color before wrapping line
+    echo $TC_BG_NORM
+
+    # Count the number of characters in the message to center it
+    echo -n "$*" | fmt -w $wrap | while read line; do
+	echo -n "$line" | wc -c | {
+	    read msglen
+
+	    # Number of spaces before the message
+	    spc=$((($col - $msglen) / 2))
+	    printf "$TC_BG_RED$TC_FG_WHITE$TC_CA_BOLD"
+	    sfutil_repeat_char " " $spc
+
+	    # Print the message
+	    echo -n "$line"
+
+	    # Fill up with spaces
+	    sfutil_repeat_char " " $(($col - $msglen - $spc))
+	    echo $TC_BG_NORM
+	}
+    done
+
+    # And an inverted line of spaces below message as well
+    printf "$TC_BG_RED$TC_FG_WHITE$TC_CA_BOLD"
+    sfutil_repeat_char " " $col
+    printf "$TC_CA_END"
+    echo
+
+    ${SFUTIL_UNTRACE_END}
+}
+
+#---------------------------------------------------------------------
+
+sfutil_format()
+#
+# Format message.
+#
+# Takes a text on stdin, and formats it according to a few simple
+# rules.
+#
+# Headings are lines surrounded by '--' (see example below).
+#
+# Lines beginning with '$' are assumed to be commands.
+#
+# Lines beginning with '>' will retain formatting, i.e. new lines are
+# honoured.
+#
+# All other lines are interpreted as "paragraphs", which will be
+# formatted to fit the current screen, wrapping lines as needed.
+#
+# Empty lines are delimiters between the above elements.
+#
+# In addition to the above paragraph markups, there's one word markup
+# that is recognized. Words surrounded by '*', like *this* are printed
+# in bold. Note that no spaces are allowed between the '*', so to make
+# multiple words bold, you have to *type* *like* *this*.
+#
+# Example:
+#
+# $ sfutil_format <<EOF
+#         --This is a heading--
+#
+#         This is a normal paragraph. It will be properly wrapped to
+#         fit the screen
+#         
+#       > -----------------------------------
+#       > | These lines will not be wrapped |
+#       > -----------------------------------
+#         
+#         You can write *bold* words too!
+#         
+#         $ ls -lrt
+# EOF
+{
+    local col wrap SED_EXTENDED
+    sfutil_init_termcap
+
+    local SFUTIL_UNTRACE_END
+    eval ${SFUTIL_UNTRACE}
+
+    # Option for extended regular expressions in sed varies with
+    # platform
+    if [ $(uname) = FreeBSD ]; then
+	SED_EXTENDED=-E
+    else
+	SED_EXTENDED=-r
+    fi
+
+    # Ask the terminal how wide it is, and default to 80
+    # columns. Subtracting 1 to avoid wrap effects.
+    col=$(($(eval ${TC_TERM_WIDTH})-1))
+    wrap=$(($col-5))
+
+    {
+	para=
+	while read line; do
+	    if echo "$line" | grep -q -E "^[[:space:]]*$"; then
+		if [ -n "${para}" ]; then
+		    printf "$para" | fmt -w ${wrap}
+		fi
+		para=
+		echo
+	    elif echo "$line" |
+		grep -q -E "^[[:space:]]*[^>\$#[:space:]]"; then
+		para="$para $line"
+	    else
+		echo "$line"
+	    fi
+	done
+	# And emit the last collected paragraph
+	if [ -n "${para}" ]; then
+	    printf "$para" | fmt -w ${wrap}
+	fi
+    } |
+    sed ${SED_EXTENDED} \
+	-e "s/^([[:space:]]*)--(.*)--/\1${TC_CA_BOLD}\2${TC_CA_END}/" \
+	-e "s/^([[:space:]]*)>(.*)/\1${TC_FG_RED}\2${TC_FG_NORM}/" \
+	-e "s/^([[:space:]]*)([\$#])(.*)/\1\2${TC_FG_GREEN}\3${TC_FG_NORM}/" \
+	-e "s/[*]([^[:space:]]+)[*]/${TC_CA_BOLD}\1${TC_CA_END}/g"
+
+    ${SFUTIL_UNTRACE_END}
+}
+
+#---------------------------------------------------------------------
+
+sfutil_prompt_yesno()
+#
+# Prompt user for yes/no answer
+#
+# Prints the prompt string, followed by the allowed answer characters,
+# with the default character capitalized.  If the user types anything
+# but the allowed characters, a short help text is displayed, and the
+# prompt is displayed again until a valid character is typed.
+#
+# If '?' is typed, and the '-h' option was used, 'func' is called.
+# This allows for application specific help texts.  The main reason
+# this is a function, rather than a simple string, is to allow pager
+# support without wiring it into this function.
+#
+# When 'func' returns, the prompt is printed again.
+#
+# The following responses are regarded as positive:
+#
+# - y
+# - Y
+# - yes
+# - yES
+#
+# (i.e. it is case insensitive, and accepts 'y' and 'yes').
+#
+# Similarily, 'n' and 'no' are accepted as negative responses.
+#
+# Arguments:
+#  -h <func>: help function to call if user types "?"
+#  -y : default to yes
+#  -n : default to no
+#  prompt: Prompt string, arbitrary number of parameters.
+#
+# Returns:
+#  Status set to true if positive response, else false.
+#
+# Example:
+#  $ sfutil_prompt_yesno -y -h help_spam "Do you want some spam with that?"
+#  Do you want some spam with that? [Y/n/?]: ?
+#  <output from running help_spam>
+#  Do you want some spam with that? [Y/n/?]: <return>
+#  $ echo $?
+#  0
+#
+#  $ sfutil_prompt_yesno "Do you want to reboot now, or later?"
+#  Do you want to reboot now, or later? [y/N]: <return>
+#  $ echo $?
+#  1
+#
+{
+    local ans help_func prompt_chars
+    local default_ans=false
+    local prompt_y=y prompt_n=N prompt_h
+
+    sfutil_init_termcap
+
+    while getopts "h:ny" arg; do
+	case $arg in
+	    h)
+		help_func="$OPTARG"
+		prompt_h=/?
+		;;
+	    n)
+		default_ans=false
+		prompt_n=N
+		prompt_y=y
+		;;
+	    y)
+		default_ans=true
+		prompt_n=n
+		prompt_y=Y
+		;;
+	    *)
+		sfutil_error "$0: Illegal option $arg"
+	esac
+    done
+
+    # Shift away options
+    shift $(expr $OPTIND - 1)
+
+    prompt_chars="$prompt_y/$prompt_n$prompt_h"
+
+    while true; do
+	printf "$TC_PROMPT$* [$TC_PROMPT_OPT$prompt_chars$TC_PROMPT_OPT_END]: $TC_PROMPT_END"
+	read ans
+	case $ans in
+	    [Yy]|[Yy][Ee][Ss])
+		true
+		return
+		;;
+	    [Nn]|[Nn][Oo])
+		false
+		return
+		;;
+	    "")
+		$default_ans
+		return
+		;;
+	    "?")
+		[ -n "$help_func" ] && $help_func
+		;;
+	    *)
+		echo $TC_HELP
+		cat <<EOF
+
+The [Y/n/?] notation means 'y', 'n' and '?' are valid responses, and 'y'
+is the default response if you just type <return> ([y/N] similarily
+means 'n' is the default.  Anwers are case insensitive, so 'y' and 'Y'
+are both interpreted as positive answers.
+
+'?' is only available if the prompt offers some additional help.
+EOF
+		echo $TC_HELP_END
+		;;
+	esac
+      done
+}
+
+#---------------------------------------------------------------------
+
+sfutil_spinner_std()
+#
+# Standard spinner using "-", "\", "|" and "/" characters
+#
+{
+    __spinchars="-\|/"
+    sfutil_spinner_init
+}
+
+
+sfutil_spinner_pulse()
+{
+    __spinchars=".oO0Oo"
+    sfutil_spinner_init
+}
+
+
+sfutil_spinner_graphic()
+{
+    __spinchars="opqrsrqp"
+    sfutil_spinner_init
+}
+
+
+sfutil_spinner_init()
+#
+# Initialize spinner
+#
+{
+    sfutil_init_termcap
+    if [ -z "$__spinchars" ]; then
+	sfutil_spinner_std
+    fi
+    __count=0
+    __spincount=$(echo -n $__spinchars | wc -c)
+}
+
+
+sfutil_spinner()
+#
+# Draw a spinner on the screen.
+#
+#
+# Each time this function is called, the next character in the
+#
+{
+    __count=$((($__count+1) % $__spincount))
+    ch=$(echo "$__spinchars" | cut -c $(($__count + 1)))
+    printf "%c${TC_M_LEFT1}" $ch
+
+}
+
+sfutil_multi_spinner()
+#
+# Draw several spinners in a row
+#
+# Draws multiple spinners in a row, for special effects.
+#
+# Examples:
+#
+# $ sfutil_spinner_graphic
+# $ printf "$TC_GRAPH"
+# $ i=0
+# $ while [ $i -lt 100 ]; do
+# >   sfutil_multi_spinner
+# >   i=$(($i+1))
+# > done
+# $ printf "$TC_GRAPH_END"
+#
+{
+    local i
+    i=0
+    while [ $i -lt $(($__spincount-1)) ]; do
+	sfutil_spinner
+	printf "$TC_M_RIGHT1"
+	i=$(($i+1))
+    done
+    i=0
+    while [ $i -lt $(($__spincount-1)) ]; do
+	printf "$TC_M_LEFT1"
+	i=$(($i+1))
+    done
+}
+
+#---------------------------------------------------------------------
+
+sfutil_progress_bg()
+#
+# Execute the command given as argument in the background, and
+# print a spinner on the screen till process is completed
+#
+{
+    "$@"&
+    trap 'kill $!' 2
+    while kill -0 $! 2>/dev/null; do
+        sfutil_spinner
+	sleep 0.1
+    done
+    echo
+}
+
+#---------------------------------------------------------------------
+
+_sfutil_progress_init()
+#
+# Set up characters to use for the progress bar frame, depending on
+# the capabilities of the terminal.
+#
+# This routine called by sfutil_progress internally
+#
+{
+    if [ -n "$TC_GRAPH" ]; then
+	HORIZ_LINE=q
+	LU=l
+	RU=k
+	LL=m
+	RL=j
+	BAR_PREFIX="${TC_GRAPH}x "
+	BAR_POSTFIX="$TC_GRAPH x"
+    else
+	HORIZ_LINE=-
+	LU=
+	RU=
+	LL=
+	RL=
+	BAR_PREFIX=" "
+	BAR_POSTFIX=
+    fi
+}
+
+#---------------------------------------------------------------------
+
+sfutil_progress()
+#
+# Draw a progress bar
+#
+# First call this routine as
+#
+# $ sfutil_progress init [columns]
+#
+# To initialize the progress bar (draw the surrounding frame),
+# then successively call it with
+#
+# $ sfutil_progress <percent>
+#
+# to draw a progress bar.
+#
+# If you move the cursor vertically between calls to sfutil_progress,
+# you need to move it back, or output will look very odd.
+#
+# Arguments:
+#  percent:   percentage to draw bar (0-100)
+#  [columns]: how many columns wide the progress bar should be
+#             (default screen width)
+#
+# Examples:
+#
+#  This looks bad in zsh on the command line for some reason. In plain
+#  /bin/sh it looks like intended though, and scripted, it looks ok in
+#  both shells.
+#
+#  This draws a progress bar, increasing from 0 to 100 in steps of 10.
+#
+#  $ sfutil_progress init; \
+#  > for i in 10 20 30 40 50 60 70 80 90 100; do
+#  >     sfutil_progress $i
+#  > done
+#
+#  This isn't a true progress bar, it works as a regression bar too!
+#
+#  $ sfutil_progress init; \
+#  > for i in 100 90 80 70 60 50 40 30 20 10 0; do
+#  >     sfutil_progress $i
+#  > done
+#
+{
+    local percentage i line spc
+    percentage=$1; shift
+
+    # Called with "init": draw the frame
+    if [ $percentage = "init" ]; then
+	sfutil_init_termcap
+	_sfutil_progress_init
+
+        exec 5>&1
+        [ "$1" = stderr ] && {
+            exec 5>&2
+            shift
+        }
+
+        trap 'printf "$TC_GRAPH_END$TC_CA_END" >&5' EXIT
+
+	if [ -n "$1" ]; then
+	    PROGRESS_COL=$1; shift
+	else
+	    PROGRESS_COL=$(($(eval ${TC_TERM_WIDTH}) - 6)) ||
+	    PROGRESS_COL=60
+	fi
+	i=$PROGRESS_COL
+	line=$(sfutil_repeat_char $HORIZ_LINE $PROGRESS_COL)
+
+	printf " $TC_GRAPH$LU$HORIZ_LINE$line$HORIZ_LINE$RU\n\n" >&5
+	printf " $TC_GRAPH$LL$HORIZ_LINE$line$HORIZ_LINE$RL" >&5
+	printf "$TC_GRAPH_END$TC_M_UP1$TC_M_CR" >&5
+    else
+	[ $TC_BG_BLUE ] &&
+	T_INVERT="$TC_BG_BLUE" ||
+	T_INVERT=$TC_CA_REVERSE
+	i=$(($percentage * $PROGRESS_COL / 100))
+	while [ $i -gt 0 ]; do
+	    spc="$spc "
+	    i=$(($i-1))
+	done
+	printf " $BAR_PREFIX$T_INVERT$spc" >&5
+	printf "$TC_CA_END" >&5
+	i=$(($PROGRESS_COL - $i))
+	i=$(($PROGRESS_COL - $percentage * $PROGRESS_COL / 100))
+	spc=
+	while [ $i -gt 0 ]; do
+	    spc="$spc "
+	    i=$(($i-1))
+	done
+	printf "$spc" >&5
+	printf "$BAR_POSTFIX" >&5
+	printf "$TC_GRAPH_END$TC_CA_END$TC_M_CR" >&5
+    fi
+}
+
+
+_sfutil_pax_progress()
+{
+    local dst opts nrfiles
+    dst="$1"; shift
+    opts="$1"; shift
+    nrfiles="$1"; shift
+
+    local SFUTIL_UNTRACE_END
+    eval ${SFUTIL_UNTRACE}
+
+    echo >&5
+    sfutil_progress init "$1"
+    echo -n ${TC_C_INVIS} >&5
+
+    ${pax:-pax} -rv ${opts} 2>&1 | {
+        i=0
+	while read l; do
+	    file=${l#$dst/}
+	    file=${file#$dst}
+            file=${file#./}
+	    i=$(($i+1))
+            if ! expr "$l" : pax: >/dev/null; then
+                sfutil_progress $((100 * $i / $nrfiles))
+                printf "${TC_M_UP1}${TC_M_UP1}  %-77s\n\n" "${file}" | \
+                    cut -c 1-84 >&5
+            fi
+	done
+	test $i = $nrfiles
+    }
+
+    status=$?
+
+    echo >&5; echo ${TC_C_NORMAL} >&5
+
+    ${SFUTIL_UNTRACE_END}
+
+    # Make sure all files were copied
+    return $status
+}
+
+#---------------------------------------------------------------------
+sfutil_extract_pax()
+#
+# Extract a tarball with progress bar
+#
+# $ sfutil_extract_pax foo.tar /var/db/tree
+#
+# Arguments:
+#  src: tar ball
+#  dst: destination directory
+#
+# Options:
+#   Any pax(1) option
+{
+    local src dst opts i l optarg status
+
+    optarg=false
+    for arg in $*; do
+	if ${optarg}; then
+	    opts="$opts $arg"
+	    optarg=false
+	else
+	    case $arg in
+		-s)
+		    opts="$opts $arg"
+		    optarg=true ;;
+		-*)
+		    opts="$opts $arg" ;;
+		*)
+                    if [ -n "${src}" ]; then
+                        sfutil_error \
+                            "sfutil_extract_pax: Wrong number of arguments"
+                        return 1
+                    fi
+		    src="$dst"
+		    dst="$arg" ;;
+	    esac
+	fi
+    done
+
+    test -z "${src}" && {
+        # No destination given
+        src="${dst}"
+        dst=
+    }
+    if [ -z "${src}" ]; then
+        sfutil_error "sfutil_extract_pax: No input file"
+        return 1
+    fi
+
+    nrfiles=$(${pax:-pax} -f ${src} ${opts} | wc -l)
+
+    if [ -n "${dst}" ]; then
+        cwd=`pwd`
+        cd "${dst}"
+    fi
+    _sfutil_pax_progress "${dst}" "-f ${src} ${opts}" "${nrfiles}" stderr
+    st=$?
+    if [ -n "${cwd}" ]; then
+        cd "${cwd}"
+    fi
+    return $st
+}
+
+#---------------------------------------------------------------------
+sfutil_copytree()
+#
+# Copy a file tree with progress bar
+#
+# Note that all sources should have relative paths, both to current
+# directory and to destination directory where they will be stored.
+# In other words, in order to copy the files /var/tmp/foo/tree to
+# /var/db/tree, do the following:
+#
+# $ cd /var/tmp/foo
+# $ sfutil_copytree tree /var/db/tree
+#
+# Arguments:
+#  src: list of sources
+#  dst: destination directory
+#
+# Options:
+#   Any pax(1) option
+{
+    local srcs dst opts i l optarg status
+
+    optarg=false
+    for arg in $*; do
+	if ${optarg}; then
+	    opts="$opts $arg"
+	    optarg=false
+	else
+	    case $arg in
+		-s)
+		    opts="$opts $arg"
+		    optarg=true ;;
+		-*)
+		    opts="$opts $arg" ;;
+		*)
+		    srcs="$srcs $dst"
+		    dst="$arg" ;;
+	    esac
+	fi
+    done
+
+    nrfiles=$(find ${srcs} | wc -l)
+    _sfutil_pax_progress "${dst}" "-w ${opts} ${srcs} ${dst}" "${nrfiles}"
+}
