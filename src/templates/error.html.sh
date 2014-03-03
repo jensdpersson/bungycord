@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo <<EOF
+cat <<EOF
 <head>
 <title>Error response</title>
 </head>

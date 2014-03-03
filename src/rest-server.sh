@@ -1,4 +1,4 @@
-#!/bin/sh -x
+#!/bin/sh
 #
 # REST web server
 #
@@ -76,15 +76,26 @@ bc_rest_traverse_resources()
 	    sfutil_info "Found resource directory $segment"
 	    cd "${segment}"
 
-	    if [ -n "$tail" ]; then
-		# Traverse to next subresource
-		bc_rest_traverse_resources "$command" "$tail"
-	    else
-		# We found the leaf resource, time to execute the
-		# method
-		true
-	    fi
-	elif [ -x "${segment}" ]; then
+	elif [ -x subresource ]; then
+	    . subresource
+	    bc_traverse_resource "$segment" "$matrix"
+
+	elif [ -n "${tail}" ]; then
+	    # Hmm, no directory, and no subresource command, but we
+	    # have more resources to traverse. Must be an unknown
+	    # resource.
+	    bc_send_error "$command" 404 "$path is not found on this server"
+	    return
+	fi
+    fi
+
+    if [ -n "$tail" ]; then
+	# Traverse to next subresource
+	bc_rest_traverse_resources "$command" "$tail"
+    else
+	# We found the leaf resource, time to execute the
+	# method
+	if [ -x "${segment}" ]; then
 	    sfutil_info "Found resource $segment as an executable"
 	    # Export stuff using CGI spec
 	    ./${segment}
@@ -92,12 +103,20 @@ bc_rest_traverse_resources()
 	elif [ -r "${segment}" ]; then
 	    sfutil_info "Found resource $segment as a static file"
 	    bc_send_response 200
+	    local size=$(stat -L -f "%z" ${segment})
+	    bc_send_header "Content-Length" $size
+	    bc_end_headers
 	    cat "${segment}"
+
 	elif [ -x subresource ]; then
-	    ./subresource "$command" "$segment" "$querypart" "$matrix"
+	    sfutil_info "Found subresource script for $segment"
+	    . subresource
+	    eval bc_${command} ${querypart:+-q ${querypart}} ${matrix:+-m ${matrix}} "${segment}"
+
 	else
 	    bc_send_error "$command" 404 "$path is not found on this server"
 	fi
+    fi
 }
 
 if [ $(basename $0) = 'rest-server.sh' ]; then

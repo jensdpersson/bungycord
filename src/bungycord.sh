@@ -5,7 +5,6 @@
 
 BC_HOME=${BC_HOME:-$(dirname $0)}
 
-. ${BC_HOME}/bungycord.sh
 . ${BC_HOME}/sfutil-base.subr
 . ${BC_HOME}/response-codes.sh
 
@@ -48,7 +47,7 @@ bc_send_response()
     if [ -z "${message}" ]; then
 	message=$(bc_status_message $status)
     fi
-    if [ "$REQUEST_VERSION" != 'HTTP/0.9']; then
+    if [ "$REQUEST_VERSION" != 'HTTP/0.9' ]; then
 	printf "HTTP/1.1 $status $message\r\n"
     fi
     bc_send_header 'Server' ${BUNGYCORD_VERSIONSTRING}
@@ -64,8 +63,8 @@ bc_send_header()
 #
 {
     local header="$1"; shift
-    local value="$1"; shift
-    if [ "$REQUEST_VERSION" != 'HTTP/0.9']; then
+    local value="$@"; shift
+    if [ "$REQUEST_VERSION" != 'HTTP/0.9' ]; then
 	printf "$header: $value\r\n"
     fi
     case "$header" in
@@ -79,10 +78,10 @@ bc_send_header()
     esac
 }
 
-bc_end_header()
+bc_end_headers()
 # Write an end-of-headers marker
 {
-    if [ "$REQUEST_VERSION" != 'HTTP/0.9']; then
+    if [ "$REQUEST_VERSION" != 'HTTP/0.9' ]; then
 	printf "\r\n"
     fi
 }
