@@ -1,0 +1,20 @@
+#!/bin/sh
+
+bc_traverse_resource()
+{
+    local segment="$1"; shift
+    local matrix="$1"; shift
+
+    sfutil_info "Looking up resource $segment in subresource script"
+}
+
+bc_GET()
+{
+    bc_parse_command_args "$@"
+    bc_send_response 200
+    bc_send_header Connection close
+    bc_end_headers
+    echo "You asked for $BC_SEGMENT"
+    echo "Matrix: $BC_MATRIX_STRING"
+    echo "Query: $BC_QUERY_STRING"
+}

@@ -111,3 +111,42 @@ bc_send_error()
     fi
 
 }
+
+bc_parse_command_args()
+{
+    local option optarg
+    for option; do
+
+	optarg=`expr "x$option" : 'x[^=]*=\(.*\)'`
+
+	case $option in
+
+	    -q=*)
+		BC_QUERY_STRING=$optarg ;;
+
+	    -m=*)
+		BC_MATRIX_STRING=$optarg ;;
+
+	    *)
+		BC_SEGMENT=$option ;;
+	esac
+    done
+}
+
+bc_serve_static_file()
+# Send a static file as the response
+#
+# Parameters:
+#   file path
+#   mime-type (optional)
+{
+    local path="$1"; shift
+    local mime=${1:-$(file --brief --mime-type ${path})}
+
+    bc_send_response 200
+    local size=$(stat -L -f "%z" "${path}")
+    bc_send_header "Content-Length" ${size}
+    bc_send_header "Content-Type" ${mime}
+    bc_end_headers
+    cat "${path}"
+}

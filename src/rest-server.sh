@@ -53,11 +53,17 @@ bc_rest_traverse_resources()
 	# appear on the leaf
 	local path_nq=${head%%\?*}
 	local querypart=${head#*\?}
+	if [ "${querypart}" = "${head}" ]; then
+	    querypart=""
+	fi
 
 	# Then split path segment into the actual path and matrix
 	# parameters
 	local segment=${path_nq%%;*}
 	local matrix=${path_nq#*;}
+	if [ "${matrix}" = "${path_nq}" ]; then
+	    matrix=""
+	fi
 
 	sfutil_info "In resource $segment, tail is $tail, directory $(pwd)"
 	# This is a subresource. We have two ways of obtaining this
@@ -78,7 +84,11 @@ bc_rest_traverse_resources()
 
 	elif [ -x subresource ]; then
 	    . subresource
-	    bc_traverse_resource "$segment" "$matrix"
+	    bc_traverse_resource "$segment" "$matrix" || {
+		# Return code decides if we should generate response or not?
+		bc_send_error "$command" 404 "$path is not found on this server"
+		return
+	    }
 
 	elif [ -n "${tail}" ]; then
 	    # Hmm, no directory, and no subresource command, but we
@@ -102,16 +112,12 @@ bc_rest_traverse_resources()
 
 	elif [ -r "${segment}" ]; then
 	    sfutil_info "Found resource $segment as a static file"
-	    bc_send_response 200
-	    local size=$(stat -L -f "%z" ${segment})
-	    bc_send_header "Content-Length" $size
-	    bc_end_headers
-	    cat "${segment}"
+	    bc_serve_static_file "${segment}"
 
 	elif [ -x subresource ]; then
 	    sfutil_info "Found subresource script for $segment"
 	    . subresource
-	    eval bc_${command} ${querypart:+-q ${querypart}} ${matrix:+-m ${matrix}} "${segment}"
+	    eval "bc_${command} ${querypart:+-q=${querypart}} ${matrix:+-m=${matrix}} ${segment}"
 
 	else
 	    bc_send_error "$command" 404 "$path is not found on this server"
