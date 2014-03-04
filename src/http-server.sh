@@ -6,64 +6,17 @@
 #
 
 BC_HOME=${BC_HOME:-$(dirname $0)}
-BC_LOG=${BC_LOG:-${BC_HOME}/../bungycord.log}
 
-. ${BC_HOME}/sfutil-base.subr
-. ${BC_HOME}/response-codes.sh
-
-exec 3>> $BC_LOG
-
-bc_quote_html()
-{
-    echo $1 | sed -e 's/&/&amp;/g' -e 's/</&lt;/g' -e 's/>/&gt;/g'
-}
-
-bc_status_message()
-# Get text message for given status code
-{
-    eval 'echo $RESPONSE_SHORT_'$1
-}
-
-bc_status_explain()
-# Get text message for given status code
-{
-    eval 'echo $RESPONSE_LONG_'$1
-}
-
-bc_send_error()
-# Send error response to server
-#
-# Parameters:
-#   command
-#   status code
-#   error message
-{
-    local command status message content_type explain
-    command="$1"; shift
-    status="$1"; shift
-    message="${1:-$(bc_status_message $status)}"; shift
-    content_type="${1:text/html}"; shift
-    bc_send_response $status "$message"
-    bc_send_header 'Content-Type' $content_type
-    bc_send_header 'Connection' 'close'
-    bc_end_headers
-    
-    if [ "$command" != 'HEAD' -a "$status" -ge 200 -a "$status" != 204 -a "$status" != 304 ]; then
-	explain=$(bc_status_explain $status)
-	message=$(bc_quote_html $message)
-	. ${BC_HOME}/templates/error.html.sh
-    fi
-
-}
+. ${BC_HOME}/bungycord.sh
 
 bc_handle()
 # Handle requests from a client
 {
-    local close_connection command path version 
-    close_connection=false
+    local command path version 
+    BC_CLOSE_CONNECTION=false
 
-    while ! $close_connection; do
-	close_connection=true
+    while ! $BC_CLOSE_CONNECTION; do
+	BC_CLOSE_CONNECTION=true
 	read command path version
 	if [ -z "$command" ]; then
 	    break
@@ -82,7 +35,7 @@ bc_handle()
 	    # Remove trailing \r
 	    minor=$(echo "${minor}" | tr -d \\r)
 	    if [ "$major" = 1 -a "$minor" -ge 1 ]; then
-		close_connection=false
+		BC_CLOSE_CONNECTION=false
 	    fi
 	    if [ "$major" -ge 2 ]; then
                 bc_send_error $command $STATUS_HTTP_VERSION_NOT_SUPPORTED "Invalid HTTP Version ($versionnr)"
@@ -102,11 +55,14 @@ bc_handle()
 	# Check headers for 'Connection'
 	case "$HEADER_CONNECTION" in
 	    close)
-		close_connection=true ;;
+		BC_CLOSE_CONNECTION=true ;;
 	    keep-alive)
-		close_connection=false ;;
+		BC_CLOSE_CONNECTION=false ;;
 	esac
-	
+
+	# Remember request version
+	export REQUEST_VERSION="${version}"
+
 	# Dispatch request
 	bc_handle_request $command $path
     done
@@ -131,6 +87,7 @@ bc_parse_headers()
 	# Remember which headers we've seen
 	HEADERS="$HEADERS $headerTr"
 	eval HEADER_$headerTr=\'"$value"\'
+	eval export HEADER_$headerTr
     done
 }
 
@@ -149,5 +106,7 @@ bc_handle_request()
     sfutil_info "Performing $command on $path"
 }
 
+if [ $(basename $0) = 'http-server.sh' ]; then
+    bc_handle
+fi
 
-bc_handle
